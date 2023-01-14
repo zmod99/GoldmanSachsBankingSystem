@@ -1,6 +1,8 @@
 package banking;
 
-import java.util.ArrayList;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Scanner;
 
@@ -8,35 +10,99 @@ public class Main {
 
     static Scanner scanner = new Scanner(System.in);
 
-    static List<Account> accounts = new ArrayList<>();
+
+    static AccountDAO accountDAO = null;
+
+    static UserDAO userDAO = null;
+
+    static Connection conn = null;
 
 
     public static void main(String[] args) {
 
-        AccountDAO accountDAO = new AccountDAO(args[1]);
-        accountDAO.loadAccountsFromDBtoList(accounts);
-        menu(accountDAO);
+        makeDbConnection(args[1]);
+        accountDAO = new AccountDAO(conn);
+        userDAO = new UserDAO(conn);
+        userMenu();
+        System.out.println("Bye!");
+    }
+
+    static void userMenu() {
+        //int userMenu je autoinicijaliziran kao 0
+        int userMenu;
+        do {
+            System.out.println("\n1. Create an user");
+            System.out.println("2. Log into user");
+            System.out.println("3. List all users");
+            System.out.println("0. Exit");
+            System.out.print(">");
+            userMenu = scanner.nextInt();
+            scanner.nextLine();
+            switch (userMenu) {
+                case 0:
+                    break;
+                case 1:
+                    User user = new User();
+                    System.out.print("\n Enter your first name: ");
+                    user.setFirstName(scanner.nextLine());
+                    System.out.print("\n Enter your last name: ");
+                    user.setLastName(scanner.nextLine());
+                    do {
+                        System.out.print("\n Enter your citizenship: (Croatia, Bulgaria or Slovenia):");
+                        user.setCountry(scanner.nextLine());
+
+                    } while (user.getCountry() == null);
+
+                    do {
+                        System.out.print("\n Enter your Identification number: ");
+                        user.setId_number(scanner.nextLine());
+                    } while (user.getId_number() == null);
+
+                    System.out.print("\n Enter your email: ");
+                    user.setEmail(scanner.nextLine());
+                    System.out.print("\n Enter your password: ");
+                    user.setPassword(scanner.nextLine());
+                    userDAO.addUser(user);
+                    break;
+                case 2:
+                    User user1;
+                    System.out.print("Please enter your email: ");
+                    String email = scanner.nextLine();
+                    System.out.print("Please enter your password: ");
+                    String password = scanner.nextLine();
+                    user1 = userDAO.getUser(email, password);
+                    if (user1 == null) {
+                        System.out.println("Incorrect email or password, try again!\n");
+                        break;
+                    }
+                    accountMenu(user1);
+                    break;
+                case 3:
+                    List<User> userList = userDAO.getUsersToList();
+                    for (User userFromList : userList
+                    ) {
+                        System.out.println(userFromList);
+                    }
+
+            }
+
+        } while (userMenu != 0);
+
 
     }
 
-    static void menu(AccountDAO accountDAO) {
+    static void accountMenu(User loggedUser) {
         int choice = 1;
         while (choice != 0) {
-            System.out.println("1. Create an account\n2. Log into account\n0. Exit");
-            try {
-                choice = Integer.parseInt(scanner.nextLine());
-
-            } catch (NumberFormatException e) {
-                System.out.println("Wrong input!");
-                break;
-            }
-
+            System.out.println("\n1. Create an account\n2. Log into account\n3. List all your accounts\n0. Exit");
+            choice = scanner.nextInt();
+            scanner.nextLine();
             switch (choice) {
                 case 1:
                     Account account = new Account();
-                    accounts.add(account);
                     account.createCard();
                     account.createPIN();
+                    account.setUser_id(loggedUser.getId());
                     System.out.println("Your account has been created");
                     System.out.println("Your card number:\n" + account.getCardNumber());
                     System.out.println("Your card PIN:\n" + account.getCardPin());
@@ -47,11 +113,19 @@ public class Main {
                     String cardNumber = scanner.nextLine();
                     System.out.println("Enter card PIN:");
                     String cardPin = scanner.nextLine();
-                    Account acc = findAccount(cardNumber, cardPin);
-                    if (acc != null) {
-                        cardMenu(acc, accountDAO);
+                    Account acc = accountDAO.findAccountByNumber(cardNumber);
+                    if (acc != null && acc.getCardPin().equals(cardPin)) {
+                        cardMenu(acc);
                     } else {
-                        System.out.println("Wrong input!");
+                        System.out.println("Incorrect card number or card PIN, try again!");
+                    }
+                    break;
+                case 3:
+                    List<Account> accountList;
+                    accountList = accountDAO.getAllAccountsFromUser(loggedUser.getId());
+                    for (Account acc1: accountList
+                         ) {
+                        System.out.println(acc1);
                     }
                     break;
                 case 0:
@@ -63,18 +137,18 @@ public class Main {
         }
     }
 
-    static void cardMenu(Account account, AccountDAO accountDAO) {
+    static void cardMenu(Account account) {
 
-        System.out.println("You have successfully logged in!");
+        System.out.println("You have successfully logged to your account!");
         boolean isActive = true;
         while (isActive) {
-            System.out.println("1. Balance\n2. Add income\n3. Do transfer\n4. Close account\n5.Log out \n0.Exit");
+            System.out.println("1. Balance\n2. Add income\n3. Do transfer\n4. Close account\n5. Log out \n0. Exit");
             String choice = scanner.next();
             scanner.nextLine();
             System.out.println();
             switch (Integer.parseInt(choice)) {
                 case 1:
-                    System.out.println(account.getBalance());
+                    System.out.println("$" + account.getBalance());
                     break;
 
                 case 2:
@@ -91,27 +165,26 @@ public class Main {
                         System.out.println("Wrong input!");
                         break;
                     }
+                    // Ako je prosla luhnov algoritam, onda se provjerava da li postoji u bazi, ako ne onda se ispise
+                    // da je greska u upisu broja kartice
                     if (Account.checkIfValid(cardNumberReciever)) {
-                        for (Account receiver : accounts) {        //iterira po accountima u listi i provjerava card number
+                        for (Account receiver : accountDAO.getAccountsToList()) {
                             if (receiver.getCardNumber().equals(cardNumberReciever)) {
-                                System.out.println("Enter the money amount that you wish to transfer:");
-                                double transferAmount = scanner.nextDouble();   // accounts are receiver(receiver) and account(sender)
-                                transferMoney(account, receiver, transferAmount);
+                                transferMoney(account, receiver);
                                 accountDAO.updateBalance(account);
                                 accountDAO.updateBalance(receiver);
                                 isFound = true;
                             }
                         }
                         if (!isFound) {
-                            System.out.println("This card does not exist in the system!"); //ovo ispise ako broj kartice podlijeze luhn alg. ali je nema u db/programu
+                            System.out.println("This card does not exist in the system!");
                         }
                     } else {
-                        System.out.println("You probably made a mistake in the card number. Please try again!"); // ako nije prosla luhn algoritam check, checkifvalid()
+                        System.out.println("You probably made a mistake in the card number. Please try again!");
                     }
                     break;
 
                 case 4:
-                    accounts.remove(account);
                     accountDAO.deleteAccount(account);
                     System.out.println("The account has been closed!\n");
                     isActive = false;
@@ -128,27 +201,30 @@ public class Main {
 
     }
 
-    static Account findAccount(String cardNumber, String cardPIN) {
-        for (int i = 0; i < accounts.size(); i++) {
-            if (cardNumber.equals(accounts.get(i).getCardNumber()) && cardPIN.equals(accounts.get(i).getCardPin())) {
-                return accounts.get(i);
-            }
-        }
-        return null;
+    static void transferMoney(Account senderAccount, Account receiverAccount) {
+        System.out.println("Enter the money amount that you wish to transfer:");
+        double transferAmount = scanner.nextDouble();   // accounts are receiver(receiver) and account(sender)s
 
-
-    }
-
-    static void transferMoney(Account sender, Account receiver, double transferAmount) {
-        if (sender.getBalance() < transferAmount) {
+        if (senderAccount.getBalance() < transferAmount) {
             System.out.println("Not enough money!");
             return;
         }
-        receiver.addIncome(transferAmount);
-        sender.setBalance(sender.getBalance() - transferAmount);
+        if (transferAmount <= 0L) {
+            System.out.println("Wrong input!");
+            return;
+        }
+        receiverAccount.addIncome(transferAmount);
+        senderAccount.setBalance(senderAccount.getBalance() - transferAmount);
         System.out.println("Success!");
     }
 
+    private static void makeDbConnection(String fileName) {
+        try {
+            conn = DriverManager.getConnection("jdbc:sqlite:" + fileName);
+        } catch (SQLException e) {
+            throw new RuntimeException();
+        }
+    }
 
 
 }
